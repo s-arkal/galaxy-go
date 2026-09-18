@@ -1,0 +1,30 @@
+# Go build output
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go test / coverage
+*.test
+*.out
+coverage.*
+
+# Built binary
+galaxy-go
+
+# Go workspace
+go.work
+go.work.sum
+
+# macOS
+.DS_Store
+
+# IDEs/editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
