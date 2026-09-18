@@ -6,6 +6,8 @@ import (
 	"log"
 	"math"
 	"math/rand"
+	"runtime"
+	"sync"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -97,13 +99,43 @@ func newRandomStar(rng *rand.Rand) Star {
 }
 
 type Game struct {
-	star []Star
+	stars []Star
 }
 
 func (g *Game) Update() error {
-	for i := range g.star {
-		updateStar(&g.star[i])
+	workerCount := runtime.GOMAXPROCS(0)
+
+	if workerCount > len(g.stars) {
+		workerCount = len(g.stars)
 	}
+
+	chunkSize := (len(g.stars) + workerCount - 1) / workerCount
+
+	var wg sync.WaitGroup
+
+	for worker := 0; worker < workerCount; worker++ {
+		start := worker * chunkSize
+		end := start + chunkSize
+		if end > len(g.stars) {
+			end = len(g.stars)
+		}
+
+		if start >= len(g.stars) {
+			break
+		}
+
+		wg.Add(1)
+
+		go func(start, end int) {
+			defer wg.Done()
+
+			for i := start; i < end; i++ {
+				updateStar(&g.stars[i])
+			}
+		}(start, end)
+	}
+
+	wg.Wait()
 
 	return nil
 }
@@ -117,8 +149,8 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		color.White,
 		false,
 	)
-	for i := range g.star {
-		star := &g.star[i]
+	for i := range g.stars {
+		star := &g.stars[i]
 		vector.DrawFilledCircle(
 			screen,
 			float32(star.X),
@@ -149,7 +181,7 @@ func main() {
 	}
 
 	game := &Game{
-		star: stars,
+		stars: stars,
 	}
 
 	ebiten.SetWindowSize(screenWidth, screenHeight)
