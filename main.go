@@ -45,7 +45,135 @@ func updateStar(star *Star) {
 
 }
 
-func newRandomStar(rng *rand.Rand) Star {
+func circularSpeed(radius float64) float64 {
+	softenedRadius := math.Pow(radius*radius+epsilon*epsilon, 1.5)
+	orbitalSpeed := math.Sqrt(G * centralMass * radius * radius / softenedRadius)
+	return orbitalSpeed
+}
+
+func truncatedNormal(rng *rand.Rand, limit float64) float64 {
+	for {
+		z := rng.NormFloat64()
+		if math.Abs(z) <= limit {
+			return z
+		}
+	}
+}
+
+func luminosityFromMass(mass float64) float64 {
+	return math.Pow(mass, 3.5)
+}
+
+func starRenderRadius(star *Star) float32 {
+	brightness := math.Log1p(star.Luminosity)
+	radius := 1.0 + 0.7*brightness
+
+	if radius > 3.0 {
+		radius = 3.0
+	}
+	return float32(radius)
+}
+
+func starColor(star *Star) color.Color {
+	if star.Population == BulgeStar {
+		return color.RGBA{
+			R: 255,
+			G: 210,
+			B: 140,
+			A: 255,
+		}
+	}
+
+	switch {
+	case star.Mass < 0.8:
+		return color.RGBA{
+			R: 255,
+			G: 190,
+			B: 140,
+			A: 255,
+		}
+	case star.Mass < 1.2:
+		return color.RGBA{
+			R: 255,
+			G: 244,
+			B: 220,
+			A: 255,
+		}
+	default:
+		return color.RGBA{
+			R: 190,
+			G: 215,
+			B: 255,
+			A: 255,
+		}
+	}
+}
+
+func newBulgeStar(rng *rand.Rand) Star {
+	const (
+		bulgeSigma     = 45.0
+		maxBulgeRadius = 130.0
+
+		meanMass = 1.0
+		massStd  = 0.2
+	)
+
+	var dx, dy, radius float64
+
+	for {
+		dx = bulgeSigma * rng.NormFloat64()
+		dy = bulgeSigma * rng.NormFloat64()
+
+		radius = math.Sqrt(dx*dx + dy*dy)
+
+		if radius <= maxBulgeRadius {
+			break
+		}
+	}
+
+	x := centerX + dx
+	y := centerY + dy
+
+	angle := math.Atan2(dy, dx)
+	vCircular := circularSpeed(radius)
+	tangentialSpeed := vCircular * (1.0 + 0.15*truncatedNormal(rng, 2.5))
+
+	direction := 1.0
+
+	if rng.Float64() < 0.5 {
+		direction = -1.0
+	}
+
+	tangentialSpeed *= direction
+
+	vx := -math.Sin(angle) * tangentialSpeed
+	vy := math.Cos(angle) * tangentialSpeed
+
+	radialVelocity := 0.15 * vCircular * truncatedNormal(rng, 2.5)
+
+	vx += radialVelocity * math.Sin(angle)
+	vy += radialVelocity * math.Cos(angle)
+
+	mass := meanMass + massStd*rng.NormFloat64()
+
+	if mass < 0.1 {
+		mass = 0.1
+	}
+
+	luminosity := luminosityFromMass(mass)
+
+	return Star{
+		X:          x,
+		Y:          y,
+		VX:         vx,
+		VY:         vy,
+		Mass:       mass,
+		Luminosity: luminosity,
+		Population: BulgeStar,
+	}
+}
+
+func newDiskStar(rng *rand.Rand) Star {
 	const (
 		diskScale = 120.0
 		maxRadius = 380.0
@@ -81,9 +209,7 @@ func newRandomStar(rng *rand.Rand) Star {
 	}
 
 	speedNoise := 1.0 + velocityDispersion*rng.NormFloat64()
-	softenedRadius := math.Pow(radius*radius+epsilon*epsilon, 1.5)
-	orbitalSpeed := math.Sqrt(G * centralMass * radius * radius / softenedRadius)
-	orbitalSpeed *= speedNoise
+	orbitalSpeed := circularSpeed(radius) * speedNoise
 
 	vx := -math.Sin(angle) * orbitalSpeed
 	vy := math.Cos(angle) * orbitalSpeed
@@ -93,12 +219,16 @@ func newRandomStar(rng *rand.Rand) Star {
 	vx += radialVelocity * math.Cos(angle)
 	vy += radialVelocity * math.Sin(angle)
 
+	luminosity := luminosityFromMass(mass)
+
 	return Star{
-		X:    x,
-		Y:    y,
-		VX:   vx,
-		VY:   vy,
-		Mass: mass,
+		X:          x,
+		Y:          y,
+		VX:         vx,
+		VY:         vy,
+		Mass:       mass,
+		Luminosity: luminosity,
+		Population: DiskStar,
 	}
 }
 
@@ -155,12 +285,13 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	)
 	for i := range g.stars {
 		star := &g.stars[i]
+
 		vector.DrawFilledCircle(
 			screen,
 			float32(star.X),
 			float32(star.Y),
-			3,
-			color.White,
+			starRenderRadius(star),
+			starColor(star),
 			false,
 		)
 	}
@@ -176,12 +307,19 @@ func main() {
 
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	const starCount = 100
+	const (
+		diskStarCount  = 1500
+		bulgeStarCount = 300
+	)
 
-	stars := make([]Star, starCount)
+	stars := make([]Star, 0, diskStarCount+bulgeStarCount)
 
-	for i := range stars {
-		stars[i] = newRandomStar(rng)
+	for i := 0; i < diskStarCount; i++ {
+		stars = append(stars, newDiskStar(rng))
+	}
+
+	for i := 0; i < bulgeStarCount; i++ {
+		stars = append(stars, newBulgeStar(rng))
 	}
 
 	game := &Game{
