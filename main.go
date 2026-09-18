@@ -47,8 +47,8 @@ func updateStar(star *Star) {
 
 func newRandomStar(rng *rand.Rand) Star {
 	const (
-		meanRadius = 250.0
-		radiusStd  = 80.0
+		diskScale = 120.0
+		maxRadius = 380.0
 
 		meanMass = 1.0
 		massStd  = 0.2
@@ -57,28 +57,32 @@ func newRandomStar(rng *rand.Rand) Star {
 		radialDispersion   = 2.0
 	)
 
-	radius := meanRadius + radiusStd*rng.NormFloat64()
+	var radius float64
 
-	if radius < 30 {
-		radius = 30
-	}
+	for {
+		r1 := -diskScale * math.Log(1-rng.Float64())
+		r2 := -diskScale * math.Log(1-rng.Float64())
 
-	if radius > 500 {
-		radius = 500
+		radius = r1 + r2
+
+		if radius <= maxRadius {
+			break
+		}
 	}
 
 	angle := rng.Float64() * 2 * math.Pi
 	x := centerX + radius*math.Cos(angle)
 	y := centerY + radius*math.Sin(angle)
 
-	mass := 1.0 + 0.2*rng.NormFloat64()
+	mass := meanMass + massStd*rng.NormFloat64()
 
 	if mass < 0.1 {
 		mass = 0.1
 	}
 
 	speedNoise := 1.0 + velocityDispersion*rng.NormFloat64()
-	orbitalSpeed := math.Sqrt(G * centralMass / radius)
+	softenedRadius := math.Pow(radius*radius+epsilon*epsilon, 1.5)
+	orbitalSpeed := math.Sqrt(G * centralMass * radius * radius / softenedRadius)
 	orbitalSpeed *= speedNoise
 
 	vx := -math.Sin(angle) * orbitalSpeed
