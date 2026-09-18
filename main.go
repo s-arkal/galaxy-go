@@ -24,8 +24,9 @@ type Game struct {
 
 func (g *Game) Update() error {
 	const (
-		dt      = 1.0 / 60.0
-		gravity = 100
+		dt          = 1.0 / 60.0
+		G           = 1000.0
+		centralMass = 100.0
 	)
 
 	dx := centerX - g.star.X
@@ -36,8 +37,10 @@ func (g *Game) Update() error {
 	dirX := dx / dist
 	dirY := dy / dist
 
-	g.star.AX = dirX * gravity
-	g.star.AY = dirY * gravity
+	acceleration := G * centralMass / (dist * dist)
+
+	g.star.AX = dirX * acceleration
+	g.star.AY = dirY * acceleration
 
 	g.star.VX += g.star.AX * dt
 	g.star.VY += g.star.AY * dt
@@ -78,7 +81,7 @@ func main() {
 		star: Star{
 			X:    800,
 			Y:    400,
-			VX:   100,
+			VX:   0,
 			VY:   0,
 			Mass: 1,
 		},
