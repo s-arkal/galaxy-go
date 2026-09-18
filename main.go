@@ -25,9 +25,19 @@ const (
 	G           = 1000.0
 	centralMass = 100.0
 	epsilon     = 20.0
+
+	armCount       = 4
+	armStartRadius = 40.0
+	pitchDegrees   = 18.0
+
+	patternSpeed   = 0.05
+	spiralStrength = 5.0
+
+	haloSpeed      = 14.0
+	haloCoreRadius = 120.0
 )
 
-func updateStar(star *Star) {
+func updateStar(star *Star, simTime float64) {
 	dx := centerX - star.X
 	dy := centerY - star.Y
 
@@ -36,6 +46,16 @@ func updateStar(star *Star) {
 
 	star.AX = G * centralMass * dx / softened
 	star.AY = G * centralMass * dy / softened
+
+	haloAX, haloAY := haloAcceleration(star)
+	star.AX += haloAX
+	star.AY += haloAY
+
+	if star.Population == DiskStar {
+		spiralAX, spiralAY := spiralAcceleration(star, simTime)
+		star.AX += spiralAX
+		star.AY += spiralAY
+	}
 
 	star.VX += star.AX * dt
 	star.VY += star.AY * dt
@@ -46,8 +66,14 @@ func updateStar(star *Star) {
 }
 
 func circularSpeed(radius float64) float64 {
-	softenedRadius := math.Pow(radius*radius+epsilon*epsilon, 1.5)
-	orbitalSpeed := math.Sqrt(G * centralMass * radius * radius / softenedRadius)
+	r2 := radius * radius
+	softenedRadius := math.Pow(r2+epsilon*epsilon, 1.5)
+	centralVC2 := G * centralMass * r2 / softenedRadius
+
+	haloVC2 := haloSpeed * haloSpeed * r2 / (r2 + haloCoreRadius*haloCoreRadius)
+
+	totalVC2 := centralVC2 + haloVC2
+	orbitalSpeed := math.Sqrt(totalVC2)
 	return orbitalSpeed
 }
 
@@ -72,6 +98,55 @@ func starRenderRadius(star *Star) float32 {
 		radius = 3.0
 	}
 	return float32(radius)
+}
+
+func spiralAcceleration(star *Star, simTime float64) (float64, float64) {
+	dx := star.X - centerX
+	dy := star.Y - centerY
+
+	radius := math.Sqrt(dx*dx + dy*dy)
+
+	if radius < armStartRadius {
+		return 0, 0
+	}
+
+	theta := math.Atan2(dy, dx)
+
+	pitch := pitchDegrees * math.Pi / 180.0
+	b := math.Tan(pitch)
+
+	m := float64(armCount)
+
+	phase := m * (theta + math.Log(radius/armStartRadius)/b - patternSpeed*simTime)
+
+	s := math.Sin(phase)
+
+	radialAcceleration := -spiralStrength * m * s / (b * radius)
+
+	tangentialAcceleration := -spiralStrength * m * s / radius
+
+	cosTheta := math.Cos(theta)
+	sinTheta := math.Sin(theta)
+
+	ax := radialAcceleration*cosTheta - tangentialAcceleration*sinTheta
+	ay := radialAcceleration*sinTheta + tangentialAcceleration*cosTheta
+
+	return ax, ay
+}
+
+func haloAcceleration(star *Star) (float64, float64) {
+	dx := centerX - star.X
+	dy := centerY - star.Y
+	r2 := dx*dx + dy*dy
+
+	if r2 == 0 {
+		return 0, 0
+	}
+
+	factor := haloSpeed * haloSpeed / (r2 + haloCoreRadius*haloCoreRadius)
+
+	return factor * dx, factor * dy
+
 }
 
 func starColor(star *Star) color.Color {
@@ -151,8 +226,8 @@ func newBulgeStar(rng *rand.Rand) Star {
 
 	radialVelocity := 0.15 * vCircular * truncatedNormal(rng, 2.5)
 
-	vx += radialVelocity * math.Sin(angle)
-	vy += radialVelocity * math.Cos(angle)
+	vx += radialVelocity * math.Cos(angle)
+	vy += radialVelocity * math.Sin(angle)
 
 	mass := meanMass + massStd*rng.NormFloat64()
 
@@ -178,6 +253,8 @@ func newDiskStar(rng *rand.Rand) Star {
 		diskScale = 120.0
 		maxRadius = 380.0
 
+		armFraction = 0.92
+
 		meanMass = 1.0
 		massStd  = 0.2
 
@@ -198,7 +275,27 @@ func newDiskStar(rng *rand.Rand) Star {
 		}
 	}
 
-	angle := rng.Float64() * 2 * math.Pi
+	var angle float64
+
+	if radius < armStartRadius {
+		angle = rng.Float64() * 2 * math.Pi
+	} else if rng.Float64() < armFraction {
+		arm := rng.Intn(armCount)
+
+		armOffset := 2 * math.Pi * float64(arm) / float64(armCount)
+
+		pitch := pitchDegrees * math.Pi / 180.0
+		b := math.Tan(pitch)
+
+		spiralAngle := -math.Log(radius/armStartRadius) / b
+
+		scatter := 0.04 + 0.06*(radius/maxRadius)
+
+		angle = armOffset + spiralAngle + scatter*rng.NormFloat64()
+	} else {
+		angle = rng.Float64() * 2 * math.Pi
+	}
+
 	x := centerX + radius*math.Cos(angle)
 	y := centerY + radius*math.Sin(angle)
 
@@ -233,7 +330,8 @@ func newDiskStar(rng *rand.Rand) Star {
 }
 
 type Game struct {
-	stars []Star
+	stars   []Star
+	simTime float64
 }
 
 func (g *Game) Update() error {
@@ -264,12 +362,14 @@ func (g *Game) Update() error {
 			defer wg.Done()
 
 			for i := start; i < end; i++ {
-				updateStar(&g.stars[i])
+				updateStar(&g.stars[i], g.simTime)
 			}
 		}(start, end)
 	}
 
 	wg.Wait()
+
+	g.simTime += dt
 
 	return nil
 }
@@ -308,8 +408,8 @@ func main() {
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	const (
-		diskStarCount  = 1500
-		bulgeStarCount = 300
+		diskStarCount  = 5000
+		bulgeStarCount = 500
 	)
 
 	stars := make([]Star, 0, diskStarCount+bulgeStarCount)
